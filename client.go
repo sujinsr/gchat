@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+var (
+	ServerIP   string = "127.0.0.1"
+	ServerPort string = "20099"
+)
+
 func errorCheck(err error, errStr string) {
 	if err != nil {
 		fmt.Println(errStr)
@@ -16,16 +21,12 @@ func errorCheck(err error, errStr string) {
 }
 
 func clientSender(conn net.Conn) {
-	fmt.Print("Enter Your Name : ")
-	/*reader := bufio.NewReader(os.Stdin)
-	name, _ := reader.ReadBytes('\n')
-	conn.Write(name[:len(name)-1])*/
+	fmt.Print("\n\tEnter Your Chat Name : ")
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		message, _ := reader.ReadBytes('\n')
-
-		//fmt.Println("I am going to send->", message)
 		conn.Write(message[0 : len(message)-1])
+		fmt.Println("")
 	}
 }
 
@@ -34,12 +35,13 @@ func clientReceiver(conn net.Conn) {
 	for {
 		n, err := conn.Read(msg)
 		errorCheck(err, "Read error")
-		fmt.Println("[$", string(msg[:n]))
+		msg := string(msg[:n])
+		fmt.Println("$------------------>", msg, "\n")
 	}
 }
 
 func main() {
-	conn, err := net.Dial("tcp", "127.0.0.1:20099")
+	conn, err := net.Dial("tcp", ServerIP+":"+ServerPort)
 	errorCheck(err, "tcp connect error")
 	defer conn.Close()
 	go clientSender(conn)

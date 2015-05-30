@@ -7,13 +7,24 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 )
 
 type ClientProp struct {
 	Name string
 	Conn net.Conn
 }
+
+type Message struct {
+	Type int
+	Name string
+	Data string
+}
+
+const (
+	CONTROL_MSG = 1
+	BROAD_MSG   = 2
+	CHAT_MSG    = 3
+)
 
 var (
 	ServerIP   string = "127.0.0.1"
@@ -34,20 +45,35 @@ func Log(v ...interface{}) {
 	}
 }
 
-func clientHandler(conn net.Conn, ch_msg chan string, l *list.List) {
+func clientHandler(conn net.Conn, ch_msg chan Message, l *list.List) {
 	var stop bool = false
+	msg := Message{}
 
-	/*Read name for the connection */
+	/*Read name for the connection from client*/
 	buf := make([]byte, 1024)
 	n, _ := conn.Read(buf)
 	/* Convert byte array to string */
 	name := string(buf[:n])
+	/* check same name already available in list */
+	avail := checkAvail(l, name)
+	if avail == true {
+		Log("Client Name already available in the list")
+		conn.Write([]byte(strconv.Itoa(1)))
+		return
+	}
+	/*Send success control message to client*/
+	conn.Write([]byte(strconv.Itoa(0)))
 
-	/* Add to client list*/
+	/* Add the client property to property list for future use */
 	newclient := &ClientProp{name, conn}
 	l.PushBack(*newclient)
 
-	ch_msg <- name + ":joined to chat"
+	/* Send client add message to all connected clients */
+	msg.Type = BROAD_MSG
+	msg.Name = name
+	msg.Data = "joined the chat"
+	ch_msg <- msg
+	Log("Client " + name + " Connected to the Sever")
 
 	/* Receive messages continuously untill connection is active */
 	for !stop {
@@ -57,32 +83,58 @@ func clientHandler(conn net.Conn, ch_msg chan string, l *list.List) {
 			stop = true
 			continue
 		}
-		msg := name + ":" + string(buf[:n2])
+		msg.Type = CHAT_MSG
+		msg.Name = name
+		msg.Data = string(buf[:n2])
 		//Log(name + " sending->" + msg)
 		ch_msg <- msg
 	}
+
+	/* Remove the client and send status messge */
 	removeClient(l, name)
-	fmt.Println("Closing the Client Connection")
+
+	msg.Type = BROAD_MSG
+	msg.Data = "left the chat"
+	ch_msg <- msg
+
+	fmt.Println("Client", name, "Closed the Connection")
 	conn.Close()
 }
 
-func allClientSend(ch_msg chan string, l *list.List) {
-	for {
-		msg := <-ch_msg
-		/* get the name of the sender from channel message because we don't
-		want to write on sender's stream */
-		arr_msg := strings.Split(msg, ":")
-		name := arr_msg[0]
-		fmt.Println(name)
-		Log("send-> " + msg + " L" + strconv.Itoa(len(msg)))
+func allClientSend(ch_msg chan Message, l *list.List) {
+	var write_msg string
 
+	for {
+		/* receive the data from channel */
+		msg := <-ch_msg
+
+		/* Format the message based on the type to sent */
+		if msg.Type == BROAD_MSG {
+			write_msg = msg.Name + " " + msg.Data
+		} else if msg.Type == CHAT_MSG {
+			write_msg = "[ " + msg.Name + "-> " + msg.Data + " ]"
+		}
+
+		Log("send-> " + write_msg)
+
+		/* Send the message all connected client except sender */
 		for val := l.Front(); val != nil; val = val.Next() {
 			client := val.Value.(ClientProp)
-			if name != client.Name {
-				client.Conn.Write([]byte(msg))
+			if msg.Name != client.Name {
+				client.Conn.Write([]byte(write_msg))
 			}
 		}
 	}
+}
+
+func checkAvail(l *list.List, name string) bool {
+	for val := l.Front(); val != nil; val = val.Next() {
+		client := val.Value.(ClientProp)
+		if client.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func removeClient(l *list.List, name string) {
@@ -98,7 +150,7 @@ func removeClient(l *list.List, name string) {
 
 func main() {
 	client_list := list.New()
-	ch_msg := make(chan string)
+	ch_msg := make(chan Message)
 
 	netlisten, err := net.Listen("tcp", ServerIP+":"+ServerPort)
 	errorCheck(err, "Failed to listen.")
@@ -106,8 +158,8 @@ func main() {
 
 	go allClientSend(ch_msg, client_list)
 
+	fmt.Println("Server Wait for the client to connect.")
 	for {
-		fmt.Println("Server Wait for the client to connect.")
 		conn, err := netlisten.Accept()
 		errorCheck(err, "Accept Failed")
 
